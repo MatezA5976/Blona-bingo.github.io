@@ -507,3 +507,47 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// Data import/export
+document.getElementById('import-data').addEventListener('click', () => {
+    document.getElementById('import-file').click();
+});
+
+document.getElementById('export-data').addEventListener('click', () => {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        data[key] = localStorage.getItem(key);
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bingo-data.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showAlert('Dane zostały wyeksportowane!', 'success');
+});
+
+document.getElementById('import-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const data = JSON.parse(event.target.result);
+                if (confirm('To nadpisze wszystkie obecne dane. Kontynuować?')) {
+                    localStorage.clear();
+                    for (const key in data) {
+                        localStorage.setItem(key, data[key]);
+                    }
+                    showAlert('Dane zostały zaimportowane! Odśwież stronę.', 'success');
+                    location.reload();
+                }
+            } catch (error) {
+                showAlert('Błąd podczas importu danych.', 'danger');
+            }
+        };
+        reader.readAsText(file);
+    }
+});
