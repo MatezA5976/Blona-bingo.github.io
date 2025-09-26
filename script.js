@@ -378,130 +378,132 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleLeaderboardBtn.textContent = 'Ukryj Topke';
     };
 
-    // Starfield Canvas
-    const canvas = document.getElementById('starfield');
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    const stars = [];
-    const numStars = isMobile ? 50 : 150;
-    const maxDistance = 150;
-    const repulsionRadius = 100;
-    const damping = 0.99;
-    const pullForce = 0.005;
-    const repulsionForce = 2;
-
-    // Create stars
-    for (let i = 0; i < numStars; i++) {
-        const x = Math.random() * canvas.width;
-        const y = Math.random() * canvas.height;
-        stars.push({
-            x: x,
-            y: y,
-            vx: 0,
-            vy: 0,
-            originalX: x,
-            originalY: y,
-            size: Math.random() * 2 + 1
-        });
-    }
-
-    function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Draw dynamic connections
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 1;
-        for (let i = 0; i < stars.length; i++) {
-            for (let j = i + 1; j < stars.length; j++) {
-                const dx = stars[i].x - stars[j].x;
-                const dy = stars[i].y - stars[j].y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance < maxDistance) {
-                    ctx.beginPath();
-                    ctx.moveTo(stars[i].x, stars[i].y);
-                    ctx.lineTo(stars[j].x, stars[j].y);
-                    ctx.stroke();
-                }
-            }
-        }
-
-        // Draw stars
-        stars.forEach(star => {
-            ctx.fillStyle = 'white';
-            ctx.beginPath();
-            ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-            ctx.fill();
-        });
-    }
-
-    function update() {
-        stars.forEach(star => {
-            // Apply velocity damping
-            star.vx *= damping;
-            star.vy *= damping;
-
-            // Pull towards original position
-            const dxOrig = star.originalX - star.x;
-            const dyOrig = star.originalY - star.y;
-            const origDist = Math.sqrt(dxOrig * dxOrig + dyOrig * dyOrig);
-            if (origDist > 1) {
-                star.vx += (dxOrig / origDist) * pullForce;
-                star.vy += (dyOrig / origDist) * pullForce;
-            }
-
-            // Update position
-            star.x += star.vx;
-            star.y += star.vy;
-
-            // Bounce off edges
-            if (star.x < 0 || star.x > canvas.width) star.vx *= -1;
-            if (star.y < 0 || star.y > canvas.height) star.vy *= -1;
-        });
-    }
-
-    function animate() {
-        update();
-        draw();
-        requestAnimationFrame(animate);
-    }
-
-    animate();
-
-    // Mouse interaction
-    let mouseX = 0, mouseY = 0;
-    document.addEventListener('mousemove', (e) => {
-        mouseX = e.clientX;
-        mouseY = e.clientY;
-
-        stars.forEach(star => {
-            const dx = mouseX - star.x;
-            const dy = mouseY - star.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-
-            if (distance < repulsionRadius && distance > 0) {
-                // Repel from mouse
-                const force = repulsionForce / distance;
-                star.vx += (dx / distance) * force;
-                star.vy += (dy / distance) * force;
-            }
-            // Pull back is always applied in update
-        });
-    });
-
-    // Resize canvas
-    window.addEventListener('resize', () => {
+    // Starfield Canvas - only on desktop
+    if (!isMobile) {
+        const canvas = document.getElementById('starfield');
+        const ctx = canvas.getContext('2d');
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        // Reposition stars within new bounds
-        stars.forEach(star => {
-            star.originalX = Math.random() * canvas.width;
-            star.originalY = Math.random() * canvas.height;
-            star.x = star.originalX;
-            star.y = star.originalY;
-            star.vx = 0;
-            star.vy = 0;
+
+        const stars = [];
+        const numStars = 150;
+        const maxDistance = 150;
+        const repulsionRadius = 100;
+        const damping = 0.99;
+        const pullForce = 0.005;
+        const repulsionForce = 2;
+
+        // Create stars
+        for (let i = 0; i < numStars; i++) {
+            const x = Math.random() * canvas.width;
+            const y = Math.random() * canvas.height;
+            stars.push({
+                x: x,
+                y: y,
+                vx: 0,
+                vy: 0,
+                originalX: x,
+                originalY: y,
+                size: Math.random() * 2 + 1
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw dynamic connections
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < stars.length; i++) {
+                for (let j = i + 1; j < stars.length; j++) {
+                    const dx = stars[i].x - stars[j].x;
+                    const dy = stars[i].y - stars[j].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < maxDistance) {
+                        ctx.beginPath();
+                        ctx.moveTo(stars[i].x, stars[i].y);
+                        ctx.lineTo(stars[j].x, stars[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function update() {
+            stars.forEach(star => {
+                // Apply velocity damping
+                star.vx *= damping;
+                star.vy *= damping;
+
+                // Pull towards original position
+                const dxOrig = star.originalX - star.x;
+                const dyOrig = star.originalY - star.y;
+                const origDist = Math.sqrt(dxOrig * dxOrig + dyOrig * dyOrig);
+                if (origDist > 1) {
+                    star.vx += (dxOrig / origDist) * pullForce;
+                    star.vy += (dyOrig / origDist) * pullForce;
+                }
+
+                // Update position
+                star.x += star.vx;
+                star.y += star.vy;
+
+                // Bounce off edges
+                if (star.x < 0 || star.x > canvas.width) star.vx *= -1;
+                if (star.y < 0 || star.y > canvas.height) star.vy *= -1;
+            });
+        }
+
+        function animate() {
+            update();
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+
+        // Mouse interaction
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+
+            stars.forEach(star => {
+                const dx = mouseX - star.x;
+                const dy = mouseY - star.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < repulsionRadius && distance > 0) {
+                    // Repel from mouse
+                    const force = repulsionForce / distance;
+                    star.vx += (dx / distance) * force;
+                    star.vy += (dy / distance) * force;
+                }
+                // Pull back is always applied in update
+            });
         });
-    });
+
+        // Resize canvas
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Reposition stars within new bounds
+            stars.forEach(star => {
+                star.originalX = Math.random() * canvas.width;
+                star.originalY = Math.random() * canvas.height;
+                star.x = star.originalX;
+                star.y = star.originalY;
+                star.vx = 0;
+                star.vy = 0;
+            });
+        });
+    }
 });
