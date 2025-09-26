@@ -385,7 +385,7 @@ document.addEventListener('DOMContentLoaded', function() {
     canvas.height = window.innerHeight;
 
     const stars = [];
-    const numStars = 150;
+    const numStars = isMobile ? 50 : 150;
     const maxDistance = 150;
     const repulsionRadius = 100;
     const damping = 0.99;
@@ -494,6 +494,14 @@ document.addEventListener('DOMContentLoaded', function() {
     window.addEventListener('resize', () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        // Reset stars to new bounds if needed, but for simplicity, let them adjust
+        // Reposition stars within new bounds
+        stars.forEach(star => {
+            star.originalX = Math.random() * canvas.width;
+            star.originalY = Math.random() * canvas.height;
+            star.x = star.originalX;
+            star.y = star.originalY;
+            star.vx = 0;
+            star.vy = 0;
+        });
     });
 });
