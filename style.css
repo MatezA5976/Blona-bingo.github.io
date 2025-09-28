@@ -388,9 +388,9 @@ header {
     }
 
     .bingo-cell {
-        font-size: 0.6rem;
-        padding: 5px;
-        min-height: 40px;
+        font-size: 0.75rem;
+        padding: 4px;
+        min-height: 45px;
     }
 
     .row {
@@ -426,8 +426,8 @@ header {
     }
 
     .bingo-cell {
-        font-size: 0.5rem;
-        padding: 3px;
-        min-height: 30px;
+        font-size: 0.65rem;
+        padding: 2px;
+        min-height: 35px;
     }
 }
