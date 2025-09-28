@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentEmail = null;
     let markedItems = new Set();
     let currentPoints = 0;
+    let rememberMe = false;
 
     const items = [
         'Piwko', 'Daj bucha', 'Zatarta skrzynia biegów', 'Wywrotka',
@@ -24,10 +25,34 @@ document.addEventListener('DOMContentLoaded', function() {
         'Chrapanie', 'Przekleństwa', 'Klima', 'RARE EVENT - Żyd'
     ];
 
-    // Utility functions
+    // Migrate old user data format
+    let users = JSON.parse(localStorage.getItem('users') || '{}');
+    for (let email in users) {
+        if (typeof users[email] === 'string') {
+            users[email] = { password: users[email], username: email }; // Fallback username to email
+        }
+    }
+    localStorage.setItem('users', JSON.stringify(users));
+
+    // Check if user is logged in
+    const savedUser = localStorage.getItem('currentUser') || sessionStorage.getItem('currentUser');
+    if (savedUser) {
+        users = JSON.parse(localStorage.getItem('users') || '{}'); // Reload after migration
+        if (users[savedUser] && users[savedUser].password) {
+            currentEmail = savedUser;
+            currentUser = users[savedUser].username || savedUser; // Fallback if no username
+            loadUserData();
+            showBingo();
+        } else {
+            showAuth();
+        }
+    } else {
+        showAuth();
+    }
+
     function validateForm(username, email, password, isLogin = false) {
-        if (!username || username.length < 3) return 'Nazwa użytkownika musi mieć co najmniej 3 znaki.';
-        if (!isLogin && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return 'Podaj poprawny email.';
+        if (!isLogin && (!username || username.length < 3)) return 'Nazwa użytkownika musi mieć co najmniej 3 znaki.';
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Podaj poprawny email.';
         if (!password || password.length < 4) return 'Hasło musi mieć co najmniej 4 znaki.';
         return null;
     }
@@ -62,52 +87,53 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
     }
 
-    function updateScores() {
-        const usersData = JSON.parse(localStorage.getItem('usersData') || '{}');
-        if (!usersData[currentUser]) {
-            usersData[currentUser] = { email: currentEmail, wins: 0, points: 0 };
-        }
-        usersData[currentUser].wins = markedItems.size === 16 ? 1 : 0; // Win only on full bingo
-        usersData[currentUser].points = currentPoints;
-        localStorage.setItem('usersData', JSON.stringify(usersData));
-    }
-
     function loadUserData() {
-        const usersData = JSON.parse(localStorage.getItem('usersData') || '{}');
-        if (usersData[currentUser]) {
-            currentEmail = usersData[currentUser].email || '';
-            currentPoints = usersData[currentUser].points || 0;
+        const storedMarked = localStorage.getItem(`marked_${currentEmail}`);
+        const storedPoints = localStorage.getItem(`points_${currentEmail}`);
+        const lastPlay = localStorage.getItem(`lastPlay_${currentEmail}`);
+        if (storedMarked) {
+            markedItems = new Set(JSON.parse(storedMarked));
         }
-
-        // Bingo reset every 20 hours
-        const lastPlay = localStorage.getItem(`lastPlay_${currentUser}`);
+        currentPoints = parseInt(storedPoints) || 0;
         if (lastPlay) {
             const hoursSinceLastPlay = (Date.now() - parseInt(lastPlay)) / (1000 * 60 * 60);
             if (hoursSinceLastPlay > 20) {
                 markedItems.clear();
                 currentPoints = 0;
-                localStorage.removeItem(`marked_${currentUser}`);
-                localStorage.setItem(`lastPlay_${currentUser}`, Date.now().toString());
+                localStorage.setItem(`marked_${currentEmail}`, JSON.stringify([]));
+                localStorage.setItem(`points_${currentEmail}`, '0');
+                localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
                 showAlert('Bingo zostało zresetowane po 20 godzinach!', 'info');
             }
         } else {
-            localStorage.setItem(`lastPlay_${currentUser}`, Date.now().toString());
+            localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
+        }
+        updateGrid();
+        updateMarkedInfo();
+        if (checkWin()) {
+            winMessage.classList.remove('hidden');
         }
     }
 
-    function updateLeaderboard() {
-        const usersData = JSON.parse(localStorage.getItem('usersData') || '{}');
-        const leaderboard = Object.entries(usersData)
-            .sort(([,a], [,b]) => b.points - a.points)
-            .slice(0, 5)
-            .map(([user, data], index) => `
-                <div class="leaderboard-item">
-                    <span class="leaderboard-rank">#${index + 1} ${user}</span>
-                    <span>${data.points} pkt</span>
-                </div>
-            `).join('');
+    function saveUserData() {
+        localStorage.setItem(`marked_${currentEmail}`, JSON.stringify([...markedItems]));
+        localStorage.setItem(`points_${currentEmail}`, currentPoints.toString());
+        localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
+    }
 
-        leaderboardDiv.innerHTML = leaderboard || '<p class="text-muted">Brak graczy w topce</p>';
+    function updateLeaderboard() {
+        const users = JSON.parse(localStorage.getItem('users') || '{}');
+        const leaderboard = Object.entries(users).map(([email, data]) => ({
+            name: (data && data.username) ? data.username : email,
+            points: parseInt(localStorage.getItem(`points_${email}`) || '0')
+        })).sort((a, b) => b.points - a.points).slice(0, 5);
+        const html = leaderboard.map((user, index) => `
+            <div class="leaderboard-item">
+                <span class="leaderboard-rank">#${index + 1} ${user.name}</span>
+                <span>${user.points} pkt</span>
+            </div>
+        `).join('');
+        leaderboardDiv.innerHTML = html || '<p class="text-muted">Brak graczy w topce</p>';
     }
 
     function showBingo() {
@@ -115,10 +141,10 @@ document.addEventListener('DOMContentLoaded', function() {
         bingoSection.classList.remove('hidden');
         userInfo.innerHTML = `Zalogowany jako: <strong>${currentUser}</strong> | Punkty: ${currentPoints}`;
         logoutButton.classList.remove('hidden');
-        loadMarkedItems();
-        loadUserData();
+        const leaderboardCard = document.getElementById('leaderboard-card');
+        leaderboardCard.classList.remove('hidden');
+        document.getElementById('toggle-leaderboard').textContent = 'Ukryj Topke';
         updateLeaderboard();
-        updateMarkedInfo();
     }
 
     function showAuth() {
@@ -127,27 +153,6 @@ document.addEventListener('DOMContentLoaded', function() {
         logoutButton.classList.add('hidden');
         markedInfo.classList.add('hidden');
         winMessage.classList.add('hidden');
-    }
-
-    function loadMarkedItems() {
-        const stored = localStorage.getItem(`marked_${currentUser}`);
-        if (stored) {
-            markedItems = new Set(JSON.parse(stored));
-            updateGrid();
-            currentPoints = Array.from(markedItems).reduce((total, item) => {
-                const cell = bingoGrid.querySelector(`[data-item="${item}"]`);
-                return total + parseInt(cell.dataset.points);
-            }, 0);
-            if (checkWin()) {
-                winMessage.classList.remove('hidden');
-                updateScores();
-            }
-            updateMarkedInfo();
-        }
-    }
-
-    function saveMarkedItems() {
-        localStorage.setItem(`marked_${currentUser}`, JSON.stringify([...markedItems]));
     }
 
     function updateGrid() {
@@ -187,36 +192,41 @@ document.addEventListener('DOMContentLoaded', function() {
         loginCard.classList.remove('hidden');
     });
 
-    // Event listeners
+    // Remember me checkbox
+    const rememberCheckbox = document.getElementById('remember-me');
+    rememberCheckbox.addEventListener('change', function() {
+        rememberMe = this.checked;
+    });
+
     loginForm.addEventListener('submit', function(e) {
         e.preventDefault();
-        const input = document.getElementById('login-username').value.trim();
+        const email = document.getElementById('login-username').value.trim();
         const password = document.getElementById('login-password').value;
-        const error = validateForm(input, '', password, true); // Login mode, no email validation
+        const error = validateForm('', email, password, true);
         if (error) {
             showAlert(error);
             return;
         }
-        const users = JSON.parse(localStorage.getItem('users') || '{}');
-        let foundUser = null;
-        for (let u in users) {
-            if (u === input || users[u].email === input) {
-                foundUser = u;
-                break;
+        let users = JSON.parse(localStorage.getItem('users') || '{}');
+        // Ensure migrated
+        if (typeof users[email] === 'string') {
+            users[email] = { password: users[email], username: email };
+            localStorage.setItem('users', JSON.stringify(users));
+        }
+        if (users[email] && users[email].password === password) {
+            currentEmail = email;
+            currentUser = users[email].username || email;
+            if (rememberMe) {
+                localStorage.setItem('currentUser', email);
+                localStorage.setItem('rememberMe', 'true');
+            } else {
+                sessionStorage.setItem('currentUser', email);
             }
+            loadUserData();
+            showBingo();
+        } else {
+            showAlert('Nieprawidłowe dane logowania');
         }
-    const rememberMe = document.getElementById('remember-me').checked;
-    if (foundUser && users[foundUser].password === password) {
-        currentUser = foundUser;
-        currentEmail = users[foundUser].email;
-        localStorage.setItem('currentUser', currentUser);
-        if (rememberMe) {
-            localStorage.setItem(`rememberMe_${currentUser}`, 'true');
-        }
-        showBingo();
-    } else {
-        showAlert('Nieprawidłowe dane logowania');
-    }
     });
 
     registerForm.addEventListener('submit', function(e) {
@@ -230,27 +240,31 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         const users = JSON.parse(localStorage.getItem('users') || '{}');
-        if (users[username]) {
+        if (users[email]) {
             showAlert('Użytkownik już istnieje');
         } else {
-            users[username] = { password: password, email: email };
+            users[email] = { password, username };
             localStorage.setItem('users', JSON.stringify(users));
+            localStorage.setItem(`points_${email}`, '0');
+            localStorage.setItem(`marked_${email}`, JSON.stringify([]));
+            localStorage.setItem(`lastPlay_${email}`, Date.now().toString());
             showAlert('Rejestracja zakończona sukcesem. Możesz się zalogować.', 'success');
             document.getElementById('register-username').value = '';
             document.getElementById('register-email').value = '';
             document.getElementById('register-password').value = '';
-            // Switch back to login
             registerCard.classList.add('hidden');
             loginCard.classList.remove('hidden');
         }
     });
 
     logoutButton.addEventListener('click', function() {
-        updateScores();
-        localStorage.removeItem('currentUser');
         currentUser = null;
+        currentEmail = null;
         markedItems.clear();
         currentPoints = 0;
+        localStorage.removeItem('currentUser');
+        localStorage.removeItem('rememberMe');
+        sessionStorage.removeItem('currentUser');
         showAuth();
     });
 
@@ -267,11 +281,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const points = parseInt(currentCell.dataset.points);
             markedItems.add(item);
             currentPoints += points;
-            saveMarkedItems();
+            saveUserData();
             updateGrid();
             updateMarkedInfo();
             updateLeaderboard();
-            updateScores(); // Update scores live
             userInfo.innerHTML = `Zalogowany jako: <strong>${currentUser}</strong> | Punkty: ${currentPoints}`;
             if (checkWin()) {
                 winMessage.classList.remove('hidden');
@@ -294,9 +307,21 @@ document.addEventListener('DOMContentLoaded', function() {
         confirmModal.show();
     });
 
+    // Leaderboard Toggle
+    const toggleLeaderboardBtn = document.getElementById('toggle-leaderboard');
+    const leaderboardCard = document.getElementById('leaderboard-card');
+    toggleLeaderboardBtn.addEventListener('click', () => {
+        leaderboardCard.classList.toggle('hidden');
+        if (leaderboardCard.classList.contains('hidden')) {
+            toggleLeaderboardBtn.textContent = 'Pokaż Topke';
+        } else {
+            toggleLeaderboardBtn.textContent = 'Ukryj Topke';
+        }
+    });
+
     // Mobile detection and 3D setup
     const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
-    let effectEnabled = !isMobile && (localStorage.getItem('effectEnabled') !== 'false'); // Default true on desktop
+    let effectEnabled = !isMobile && (localStorage.getItem('effectEnabled') !== 'false');
     const effectToggle = document.getElementById('effect-toggle');
     const interactiveElements = document.querySelectorAll('.card, .btn, .bingo-cell, .form-control, #effect-toggle');
 
@@ -307,7 +332,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             document.body.classList.add('no-3d');
             if (effectToggle) effectToggle.textContent = '2D';
-            // Reset transforms
             interactiveElements.forEach(el => el.style.transform = '');
         }
         localStorage.setItem('effectEnabled', effectEnabled);
@@ -322,7 +346,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Per-element 3D Mouse Tracking Effect
     function apply3DTransform(el, e) {
         if (!effectEnabled) return;
         const rect = el.getBoundingClientRect();
@@ -332,7 +355,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const mouseY = e.clientY;
         const deltaX = (mouseX - centerX) / (rect.width / 2);
         const deltaY = (mouseY - centerY) / (rect.height / 2);
-        const rotateX = deltaY * -15; // Adjust sensitivity
+        const rotateX = deltaY * -15;
         const rotateY = deltaX * 15;
         el.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.02)`;
     }
@@ -349,36 +372,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Initial check
-    const loggedUser = localStorage.getItem('currentUser');
-    if (loggedUser) {
-        currentUser = loggedUser;
-        showBingo();
-    } else {
-        showAuth();
-    }
-
-    // Leaderboard Toggle
-    const toggleLeaderboardBtn = document.getElementById('toggle-leaderboard');
-    const leaderboardCard = document.getElementById('leaderboard-card');
-    toggleLeaderboardBtn.addEventListener('click', () => {
-        leaderboardCard.classList.toggle('hidden');
-        if (leaderboardCard.classList.contains('hidden')) {
-            toggleLeaderboardBtn.textContent = 'Pokaż Topke';
-        } else {
-            toggleLeaderboardBtn.textContent = 'Ukryj Topke';
-        }
-    });
-
-    // In showBingo, ensure visible
-    const originalShowBingo = showBingo;
-    showBingo = function() {
-        originalShowBingo();
-        leaderboardCard.classList.remove('hidden');
-        toggleLeaderboardBtn.textContent = 'Ukryj Topke';
-    };
-
-    // Starfield Canvas - only on desktop
+    // Starfield Canvas - optimized for mobile (50 stars)
+    const numStarsMobile = 50;
     if (!isMobile) {
         const canvas = document.getElementById('starfield');
         const ctx = canvas.getContext('2d');
@@ -393,7 +388,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const pullForce = 0.005;
         const repulsionForce = 2;
 
-        // Create stars
         for (let i = 0; i < numStars; i++) {
             const x = Math.random() * canvas.width;
             const y = Math.random() * canvas.height;
@@ -410,8 +404,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Draw dynamic connections
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.lineWidth = 1;
             for (let i = 0; i < stars.length; i++) {
@@ -427,8 +419,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             }
-
-            // Draw stars
             stars.forEach(star => {
                 ctx.fillStyle = 'white';
                 ctx.beginPath();
@@ -439,11 +429,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function update() {
             stars.forEach(star => {
-                // Apply velocity damping
                 star.vx *= damping;
                 star.vy *= damping;
-
-                // Pull towards original position
                 const dxOrig = star.originalX - star.x;
                 const dyOrig = star.originalY - star.y;
                 const origDist = Math.sqrt(dxOrig * dxOrig + dyOrig * dyOrig);
@@ -451,12 +438,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     star.vx += (dxOrig / origDist) * pullForce;
                     star.vy += (dyOrig / origDist) * pullForce;
                 }
-
-                // Update position
                 star.x += star.vx;
                 star.y += star.vy;
-
-                // Bounce off edges
                 if (star.x < 0 || star.x > canvas.width) star.vx *= -1;
                 if (star.y < 0 || star.y > canvas.height) star.vy *= -1;
             });
@@ -470,32 +453,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
         animate();
 
-        // Mouse interaction
         let mouseX = 0, mouseY = 0;
         document.addEventListener('mousemove', (e) => {
             mouseX = e.clientX;
             mouseY = e.clientY;
-
             stars.forEach(star => {
                 const dx = mouseX - star.x;
                 const dy = mouseY - star.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
-
                 if (distance < repulsionRadius && distance > 0) {
-                    // Repel from mouse
                     const force = repulsionForce / distance;
                     star.vx += (dx / distance) * force;
                     star.vy += (dy / distance) * force;
                 }
-                // Pull back is always applied in update
             });
         });
 
-        // Resize canvas
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            // Reposition stars within new bounds
             stars.forEach(star => {
                 star.originalX = Math.random() * canvas.width;
                 star.originalY = Math.random() * canvas.height;
@@ -505,51 +481,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 star.vy = 0;
             });
         });
+    } else {
+        // For mobile, reduce stars or disable if needed
+        document.body.style.background = '#000'; // Simple black bg for mobile
     }
-
-    // Data import/export - moved inside DOMContentLoaded
-    document.getElementById('import-data').addEventListener('click', () => {
-        document.getElementById('import-file').click();
-    });
-
-    document.getElementById('export-data').addEventListener('click', () => {
-        const data = {};
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            data[key] = localStorage.getItem(key);
-        }
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'bingo-data.json';
-        a.click();
-        URL.revokeObjectURL(url);
-        showAlert('Dane zostały wyeksportowane!', 'success');
-    });
-
-    document.getElementById('import-file').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                try {
-                    const data = JSON.parse(event.target.result);
-                    if (confirm('To nadpisze wszystkie obecne dane. Kontynuować?')) {
-                        localStorage.clear();
-                        for (const key in data) {
-                            localStorage.setItem(key, data[key]);
-                        }
-                        showAlert('Dane zostały zaimportowane! Odśwież stronę.', 'success');
-                        location.reload();
-                    }
-                } catch (error) {
-                    showAlert('Błąd podczas importu danych.', 'danger');
-                }
-            };
-            reader.readAsText(file);
-        }
-    });
 });
-
-// No code outside DOMContentLoaded
