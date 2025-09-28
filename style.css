@@ -240,6 +240,11 @@ header {
     color: white;
 }
 
+.leaderboard-item span:last-child {
+    color: white;
+    font-weight: bold;
+}
+
 /* Modal */
 .modal-content {
     background: linear-gradient(145deg, #2a2a4e, #1e1e3f);

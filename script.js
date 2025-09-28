@@ -1,4 +1,36 @@
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+import { getFirestore, doc, setDoc, getDoc, updateDoc, query, collection, orderBy, limit, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+const firebaseConfig = {
+    apiKey: "AIzaSyBqlNXCJb0PlMJKb68yOMaPfU4rNfMpWxY",
+    authDomain: "logins-d2e98.firebaseapp.com",
+    projectId: "logins-d2e98",
+    storageBucket: "logins-d2e98.firebasestorage.app",
+    messagingSenderId: "590806251041",
+    appId: "1:590806251041:web:f061c4d892d47f1411d560"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+console.log('Firebase initialized');
+
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded');
+
+    // Global click listener for debugging
+    document.addEventListener('click', function(e) {
+        console.log('Click on:', {
+            tag: e.target.tagName,
+            id: e.target.id,
+            class: e.target.className,
+            text: e.target.textContent ? e.target.textContent.trim().substring(0, 50) : '',
+            closestForm: e.target.closest('form') ? e.target.closest('form').id : 'none'
+        });
+    }, true);
+
     const authSection = document.getElementById('auth');
     const bingoSection = document.getElementById('bingo');
     const userInfo = document.getElementById('user-info');
@@ -12,11 +44,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const winMessage = document.getElementById('win-message');
     const leaderboardDiv = document.getElementById('leaderboard');
 
+    console.log('Elements loaded:', { authSection, bingoSection, loginForm, registerForm });
+
     let currentUser = null;
-    let currentEmail = null;
+    let currentUid = null;
     let markedItems = new Set();
     let currentPoints = 0;
     let rememberMe = false;
+    let userDocRef = null;
 
     const items = [
         'Piwko', 'Daj bucha', 'Zatarta skrzynia biegów', 'Wywrotka',
@@ -25,29 +60,30 @@ document.addEventListener('DOMContentLoaded', function() {
         'Chrapanie', 'Przekleństwa', 'Klima', 'RARE EVENT - Żyd'
     ];
 
-    // Migrate old user data format
-    let users = JSON.parse(localStorage.getItem('users') || '{}');
-    for (let email in users) {
-        if (typeof users[email] === 'string') {
-            users[email] = { password: users[email], username: email }; // Fallback username to email
-        }
-    }
-    localStorage.setItem('users', JSON.stringify(users));
-
-    // Check if user is logged in
-    const savedUser = localStorage.getItem('currentUser') || sessionStorage.getItem('currentUser');
-    if (savedUser) {
-        users = JSON.parse(localStorage.getItem('users') || '{}'); // Reload after migration
-        if (users[savedUser] && users[savedUser].password) {
-            currentEmail = savedUser;
-            currentUser = users[savedUser].username || savedUser; // Fallback if no username
-            loadUserData();
+    // Auth state listener
+    onAuthStateChanged(auth, async (user) => {
+        console.log('Auth state changed:', user ? user.uid : 'logged out');
+        if (user) {
+            currentUid = user.uid;
+            userDocRef = doc(db, 'users', currentUid);
+            await loadUserData();
             showBingo();
         } else {
+            console.log('User logged out - calling showAuth');
+            currentUid = null;
+            currentUser = null;
+            markedItems.clear();
+            currentPoints = 0;
+            userDocRef = null;
             showAuth();
         }
-    } else {
-        showAuth();
+    });
+
+    // Check remember me for persistent login (Firebase handles session)
+    const rememberMeFlag = localStorage.getItem('rememberMe');
+    if (rememberMeFlag === 'true') {
+        rememberMe = true;
+        document.getElementById('remember-me').checked = true;
     }
 
     function validateForm(username, email, password, isLogin = false) {
@@ -87,73 +123,131 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
     }
 
-    function loadUserData() {
-        const storedMarked = localStorage.getItem(`marked_${currentEmail}`);
-        const storedPoints = localStorage.getItem(`points_${currentEmail}`);
-        const lastPlay = localStorage.getItem(`lastPlay_${currentEmail}`);
-        if (storedMarked) {
-            markedItems = new Set(JSON.parse(storedMarked));
-        }
-        currentPoints = parseInt(storedPoints) || 0;
-        if (lastPlay) {
-            const hoursSinceLastPlay = (Date.now() - parseInt(lastPlay)) / (1000 * 60 * 60);
-            if (hoursSinceLastPlay > 20) {
-                markedItems.clear();
-                currentPoints = 0;
-                localStorage.setItem(`marked_${currentEmail}`, JSON.stringify([]));
-                localStorage.setItem(`points_${currentEmail}`, '0');
-                localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
-                showAlert('Bingo zostało zresetowane po 20 godzinach!', 'info');
+    async function loadUserData() {
+        try {
+            // Ensure displayName is set if missing
+            if (auth.currentUser && !auth.currentUser.displayName) {
+                const defaultName = 'Użytkownik';
+                await updateProfile(auth.currentUser, { displayName: defaultName });
+                console.log('Set default displayName:', defaultName);
             }
-        } else {
-            localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
+
+            const docSnap = await getDoc(userDocRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                currentUser = data.username || auth.currentUser?.displayName || 'Użytkownik';
+                markedItems = new Set(data.marked || []);
+                currentPoints = data.points || 0;
+                const lastPlay = data.lastPlay;
+                if (lastPlay) {
+                    const hoursSinceLastPlay = (Date.now() - lastPlay.toMillis()) / (1000 * 60 * 60);
+                    if (hoursSinceLastPlay > 20) {
+                        markedItems.clear();
+                        currentPoints = 0;
+                        await updateDoc(userDocRef, { marked: [], points: 0, lastPlay: new Date() });
+                        showAlert('Bingo zostało zresetowane po 20 godzinach!', 'info');
+                    }
+                } else {
+                    await updateDoc(userDocRef, { lastPlay: new Date() });
+                }
+            } else {
+                // New user, initialize doc
+                currentUser = auth.currentUser?.displayName || 'Użytkownik';
+                await setDoc(userDocRef, {
+                    username: currentUser,
+                    marked: [],
+                    points: 0,
+                    lastPlay: new Date()
+                });
+            }
+            updateGrid();
+            updateMarkedInfo();
+            if (checkWin()) {
+                winMessage.classList.remove('hidden');
+            }
+            console.log('Loaded user:', currentUser);
+        } catch (error) {
+            console.error('Error loading user data:', error);
+            currentUser = auth.currentUser?.displayName || 'Użytkownik';
+            showAlert('Błąd ładowania danych użytkownika. Używasz domyślnej nazwy: ' + currentUser, 'warning');
         }
-        updateGrid();
-        updateMarkedInfo();
-        if (checkWin()) {
-            winMessage.classList.remove('hidden');
+    }
+
+    async function saveUserData() {
+        try {
+            await updateDoc(userDocRef, {
+                marked: [...markedItems],
+                points: currentPoints,
+                lastPlay: new Date()
+            });
+        } catch (error) {
+            console.error('Error saving user data:', error);
+            showAlert('Błąd zapisywania danych. Spróbuj ponownie.', 'danger');
         }
     }
 
-    function saveUserData() {
-        localStorage.setItem(`marked_${currentEmail}`, JSON.stringify([...markedItems]));
-        localStorage.setItem(`points_${currentEmail}`, currentPoints.toString());
-        localStorage.setItem(`lastPlay_${currentEmail}`, Date.now().toString());
+    async function updateLeaderboard() {
+        try {
+            const q = query(collection(db, 'users'), orderBy('points', 'desc'), limit(5));
+            const querySnapshot = await getDocs(q);
+            const leaderboard = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                leaderboard.push({
+                    name: data.username || 'Anonim',
+                    points: data.points || 0
+                });
+            });
+            const html = leaderboard.map((user, index) => `
+                <div class="leaderboard-item">
+                    <span class="leaderboard-rank">#${index + 1} ${user.name}</span>
+                    <span>${user.points} pkt</span>
+                </div>
+            `).join('');
+            leaderboardDiv.innerHTML = html || '<p class="text-muted">Brak graczy w topce</p>';
+            console.log('Leaderboard loaded:', leaderboard);
+        } catch (error) {
+            console.error('Error updating leaderboard:', error);
+            let errorMsg = 'Błąd ładowania topki';
+            if (error.code === 'permission-denied') {
+                errorMsg += ' - Ustaw w Firebase Console reguły Firestore na allow read, write: if true; (tylko do testów)';
+            } else {
+                errorMsg += ' - sprawdź konfigurację Firebase.';
+            }
+            leaderboardDiv.innerHTML = `<p class="text-muted">${errorMsg}</p>`;
+        }
     }
 
-    function updateLeaderboard() {
-        const users = JSON.parse(localStorage.getItem('users') || '{}');
-        const leaderboard = Object.entries(users).map(([email, data]) => ({
-            name: (data && data.username) ? data.username : email,
-            points: parseInt(localStorage.getItem(`points_${email}`) || '0')
-        })).sort((a, b) => b.points - a.points).slice(0, 5);
-        const html = leaderboard.map((user, index) => `
-            <div class="leaderboard-item">
-                <span class="leaderboard-rank">#${index + 1} ${user.name}</span>
-                <span>${user.points} pkt</span>
-            </div>
-        `).join('');
-        leaderboardDiv.innerHTML = html || '<p class="text-muted">Brak graczy w topce</p>';
+function showBingo() {
+    authSection.classList.add('hidden');
+    bingoSection.classList.remove('hidden');
+    if (!currentUser) {
+        currentUser = 'Użytkownik';
+        console.log('Fallback username set to Użytkownik');
     }
+    userInfo.innerHTML = `Zalogowany jako: <strong>${currentUser}</strong> | Punkty: ${currentPoints}`;
+    userInfo.classList.remove('hidden');
+    userInfo.classList.add('mt-2');
+    logoutButton.classList.remove('hidden');
+    const leaderboardCard = document.getElementById('leaderboard-card');
+    leaderboardCard.classList.remove('hidden');
+    document.getElementById('toggle-leaderboard').textContent = 'Ukryj Topke';
+    updateLeaderboard();
+}
 
-    function showBingo() {
-        authSection.classList.add('hidden');
-        bingoSection.classList.remove('hidden');
-        userInfo.innerHTML = `Zalogowany jako: <strong>${currentUser}</strong> | Punkty: ${currentPoints}`;
-        logoutButton.classList.remove('hidden');
-        const leaderboardCard = document.getElementById('leaderboard-card');
-        leaderboardCard.classList.remove('hidden');
-        document.getElementById('toggle-leaderboard').textContent = 'Ukryj Topke';
-        updateLeaderboard();
-    }
-
-    function showAuth() {
-        authSection.classList.remove('hidden');
-        bingoSection.classList.add('hidden');
-        logoutButton.classList.add('hidden');
-        markedInfo.classList.add('hidden');
-        winMessage.classList.add('hidden');
-    }
+function showAuth() {
+    console.log('showAuth called - hiding userInfo');
+    authSection.classList.remove('hidden');
+    bingoSection.classList.add('hidden');
+    logoutButton.classList.add('hidden');
+    markedInfo.classList.add('hidden');
+    winMessage.classList.add('hidden');
+    userInfo.innerHTML = '';
+    userInfo.classList.add('hidden');
+    userInfo.classList.remove('mt-2');
+    console.log('userInfo classes after hide:', userInfo.className);
+    console.log('userInfo display style:', window.getComputedStyle(userInfo).display);
+}
 
     function updateGrid() {
         const cells = bingoGrid.querySelectorAll('.bingo-cell');
@@ -180,92 +274,123 @@ document.addEventListener('DOMContentLoaded', function() {
     const loginCard = document.getElementById('login-card');
     const registerCard = document.getElementById('register-card');
 
-    showRegisterLink.addEventListener('click', function(e) {
-        e.preventDefault();
-        loginCard.classList.add('hidden');
-        registerCard.classList.remove('hidden');
-    });
+    console.log('Links loaded:', { showRegisterLink, showLoginLink, loginCard, registerCard });
 
-    showLoginLink.addEventListener('click', function(e) {
-        e.preventDefault();
-        registerCard.classList.add('hidden');
-        loginCard.classList.remove('hidden');
-    });
+    if (showRegisterLink) {
+        showRegisterLink.addEventListener('click', function(e) {
+            console.log('Register link clicked');
+            e.preventDefault();
+            if (loginCard && registerCard) {
+                loginCard.classList.add('hidden');
+                registerCard.classList.remove('hidden');
+            }
+        });
+    }
+
+    if (showLoginLink) {
+        showLoginLink.addEventListener('click', function(e) {
+            console.log('Login link clicked');
+            e.preventDefault();
+            if (registerCard && loginCard) {
+                registerCard.classList.add('hidden');
+                loginCard.classList.remove('hidden');
+            }
+        });
+    }
 
     // Remember me checkbox
     const rememberCheckbox = document.getElementById('remember-me');
-    rememberCheckbox.addEventListener('change', function() {
-        rememberMe = this.checked;
-    });
+    if (rememberCheckbox) {
+        rememberCheckbox.addEventListener('change', function() {
+            rememberMe = this.checked;
+            console.log('Remember me changed:', rememberMe);
+        });
+    }
 
-    loginForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const email = document.getElementById('login-username').value.trim();
-        const password = document.getElementById('login-password').value;
-        const error = validateForm('', email, password, true);
-        if (error) {
-            showAlert(error);
-            return;
-        }
-        let users = JSON.parse(localStorage.getItem('users') || '{}');
-        // Ensure migrated
-        if (typeof users[email] === 'string') {
-            users[email] = { password: users[email], username: email };
-            localStorage.setItem('users', JSON.stringify(users));
-        }
-        if (users[email] && users[email].password === password) {
-            currentEmail = email;
-            currentUser = users[email].username || email;
-            if (rememberMe) {
-                localStorage.setItem('currentUser', email);
-                localStorage.setItem('rememberMe', 'true');
-            } else {
-                sessionStorage.setItem('currentUser', email);
+    if (loginForm) {
+        loginForm.addEventListener('submit', async function(e) {
+            console.log('Login form submitted');
+            e.preventDefault();
+            const emailInput = document.getElementById('login-username');
+            const passwordInput = document.getElementById('login-password');
+            const email = emailInput ? emailInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value : '';
+            const error = validateForm('', email, password, true);
+            if (error) {
+                showAlert(error);
+                return;
             }
-            loadUserData();
-            showBingo();
-        } else {
-            showAlert('Nieprawidłowe dane logowania');
-        }
-    });
+            try {
+                console.log('Attempting login with:', email);
+                await signInWithEmailAndPassword(auth, email, password);
+                if (rememberMe) {
+                    localStorage.setItem('rememberMe', 'true');
+                }
+                // Auth state listener will handle showBingo
+            } catch (error) {
+                console.error('Login error:', error);
+                showAlert('Nieprawidłowe dane logowania');
+            }
+        });
+    }
 
-    registerForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const username = document.getElementById('register-username').value.trim();
-        const email = document.getElementById('register-email').value.trim();
-        const password = document.getElementById('register-password').value;
-        const error = validateForm(username, email, password, false);
-        if (error) {
-            showAlert(error);
-            return;
-        }
-        const users = JSON.parse(localStorage.getItem('users') || '{}');
-        if (users[email]) {
-            showAlert('Użytkownik już istnieje');
-        } else {
-            users[email] = { password, username };
-            localStorage.setItem('users', JSON.stringify(users));
-            localStorage.setItem(`points_${email}`, '0');
-            localStorage.setItem(`marked_${email}`, JSON.stringify([]));
-            localStorage.setItem(`lastPlay_${email}`, Date.now().toString());
-            showAlert('Rejestracja zakończona sukcesem. Możesz się zalogować.', 'success');
-            document.getElementById('register-username').value = '';
-            document.getElementById('register-email').value = '';
-            document.getElementById('register-password').value = '';
-            registerCard.classList.add('hidden');
-            loginCard.classList.remove('hidden');
-        }
-    });
+    if (registerForm) {
+        registerForm.addEventListener('submit', async function(e) {
+            console.log('Register form submitted');
+            e.preventDefault();
+            const usernameInput = document.getElementById('register-username');
+            const emailInput = document.getElementById('register-email');
+            const passwordInput = document.getElementById('register-password');
+            const username = usernameInput ? usernameInput.value.trim() : '';
+            const email = emailInput ? emailInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value : '';
+            const error = validateForm(username, email, password, false);
+            if (error) {
+                showAlert(error);
+                return;
+            }
+            try {
+                console.log('Attempting registration with:', email, username);
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                await updateProfile(userCredential.user, { displayName: username });
+                showAlert('Rejestracja zakończona sukcesem. Możesz się zalogować.', 'success');
+                if (usernameInput) usernameInput.value = '';
+                if (emailInput) emailInput.value = '';
+                if (passwordInput) passwordInput.value = '';
+                if (registerCard && loginCard) {
+                    registerCard.classList.add('hidden');
+                    loginCard.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Register error:', error);
+                if (error.code === 'auth/email-already-in-use') {
+                    showAlert('Użytkownik już istnieje');
+                } else {
+                    showAlert('Błąd rejestracji. Spróbuj ponownie.');
+                }
+            }
+        });
 
-    logoutButton.addEventListener('click', function() {
-        currentUser = null;
-        currentEmail = null;
-        markedItems.clear();
-        currentPoints = 0;
-        localStorage.removeItem('currentUser');
-        localStorage.removeItem('rememberMe');
-        sessionStorage.removeItem('currentUser');
-        showAuth();
+        // Additional click listener on submit button for reliability
+        const registerSubmitBtn = registerForm.querySelector('button[type="submit"]');
+        if (registerSubmitBtn) {
+            registerSubmitBtn.addEventListener('click', function(e) {
+                console.log('Register submit button clicked');
+                e.preventDefault();
+                registerForm.dispatchEvent(new Event('submit'));
+            });
+        }
+    }
+
+    logoutButton.addEventListener('click', async function() {
+        console.log('Logout button clicked');
+        try {
+            await signOut(auth);
+            localStorage.removeItem('rememberMe');
+            console.log('signOut called successfully');
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
     });
 
     // Modal confirmation
@@ -339,7 +464,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     updateEffect();
 
-    if (effectToggle && !isMobile) {
+    if (effectToggle) {
         effectToggle.addEventListener('click', function() {
             effectEnabled = !effectEnabled;
             updateEffect();
@@ -384,9 +509,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const numStars = 150;
         const maxDistance = 150;
         const repulsionRadius = 100;
-        const damping = 0.99;
-        const pullForce = 0.005;
-        const repulsionForce = 2;
+        const damping = 0.95;
+        const repulsionForce = 5;
+        const mouseRepulsionForce = 8;
 
         for (let i = 0; i < numStars; i++) {
             const x = Math.random() * canvas.width;
@@ -428,16 +553,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         function update() {
+            // Repulsion between stars
+            stars.forEach((star, i) => {
+                for (let j = i + 1; j < stars.length; j++) {
+                    const other = stars[j];
+                    const dx = star.x - other.x;
+                    const dy = star.y - other.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < repulsionRadius && distance > 0) {
+                        const force = repulsionForce / distance;
+                        star.vx += (dx / distance) * force;
+                        star.vy += (dy / distance) * force;
+                        other.vx -= (dx / distance) * force;
+                        other.vy -= (dy / distance) * force;
+                    }
+                }
+            });
+
             stars.forEach(star => {
                 star.vx *= damping;
                 star.vy *= damping;
-                const dxOrig = star.originalX - star.x;
-                const dyOrig = star.originalY - star.y;
-                const origDist = Math.sqrt(dxOrig * dxOrig + dyOrig * dyOrig);
-                if (origDist > 1) {
-                    star.vx += (dxOrig / origDist) * pullForce;
-                    star.vy += (dyOrig / origDist) * pullForce;
-                }
                 star.x += star.vx;
                 star.y += star.vy;
                 if (star.x < 0 || star.x > canvas.width) star.vx *= -1;
@@ -462,9 +597,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 const dy = mouseY - star.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 if (distance < repulsionRadius && distance > 0) {
-                    const force = repulsionForce / distance;
-                    star.vx += (dx / distance) * force;
-                    star.vy += (dy / distance) * force;
+                    const force = mouseRepulsionForce / distance;
+                    star.vx += (-dx / distance) * force;
+                    star.vy += (-dy / distance) * force;
                 }
             });
         });
